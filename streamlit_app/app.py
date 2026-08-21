@@ -22,7 +22,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.join(BASE_DIR, "models"))
 from train_recommender import recommend_for_user  # reuse the same scoring logic
 
-DATA_DIR = os.path.join(BASE_DIR, "data")
+DATA_DIR = BASE_DIR
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 API_URL = os.environ.get("FLIGHT_API_URL", "http://localhost:5000")
 
