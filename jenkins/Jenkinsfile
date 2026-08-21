@@ -1,0 +1,79 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "flight-price-api"
+        IMAGE_TAG  = "${env.BUILD_NUMBER}"
+        REGISTRY   = "your-dockerhub-username"  // update before use
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Install dependencies') {
+            steps {
+                sh 'pip install -r requirements.txt'
+            }
+        }
+
+        stage('Train & validate model') {
+            steps {
+                sh 'python3 models/train_regression.py'
+            }
+        }
+
+        stage('Run API smoke tests') {
+            steps {
+                sh '''
+                    python3 api/app.py &
+                    APP_PID=$!
+                    sleep 5
+                    curl -f http://localhost:5000/health
+                    curl -f -X POST http://localhost:5000/predict \
+                        -H "Content-Type: application/json" \
+                        -d '{"from":"Recife (PE)","to":"Florianopolis (SC)","flightType":"firstClass","agency":"FlyingDrops","time":1.76,"distance":676.53,"date":"09/26/2019"}'
+                    kill $APP_PID
+                '''
+            }
+        }
+
+        stage('Build Docker image') {
+            steps {
+                sh 'docker build -f docker/Dockerfile -t ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} .'
+                sh 'docker tag ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:latest'
+            }
+        }
+
+        stage('Push image') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
+                                                   usernameVariable: 'DOCKER_USER',
+                                                   passwordVariable: 'DOCKER_PASS')]) {
+                    sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
+                    sh 'docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}'
+                    sh 'docker push ${REGISTRY}/${IMAGE_NAME}:latest'
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh 'kubectl set image deployment/flight-price-api flight-price-api=${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} --record'
+                sh 'kubectl rollout status deployment/flight-price-api'
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline succeeded: ${IMAGE_NAME}:${IMAGE_TAG} deployed."
+        }
+        failure {
+            echo "Pipeline failed - check stage logs above."
+        }
+    }
+}
